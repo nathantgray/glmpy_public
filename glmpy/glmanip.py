@@ -30,17 +30,21 @@ def read(fn, basedir=None, buf=None):
     print(f'...Reading {fn}')
     with open(fn, 'r') as fh:
         line = fh.readline()
+        line = remove_comment_inline(line)  # remove comments (anything after //...)
         while line != '':  # Skip Blank lines
             while re.match('\s*//', line) or re.match('\s+$', line): # Skip comments and whitespace-only lines
                 line = fh.readline()
+            line = remove_comment_inline(line)  # remove comments (anything after //...)
             m = re.search('#\s?include\s+[\'"]?([^\.]+\.glm)', line)
             if m:
                 # Found dependency
                 dep_fn = Path(m.group(1))
                 read(basedir / dep_fn, basedir, buf)
             else:
+                line = remove_comment_inline(line)  # remove comments (anything after //...)
                 buf.append(line)
             line = fh.readline()
+            line = remove_comment_inline(line)  # remove comments (anything after //...)
     return buf
 
 
@@ -157,8 +161,9 @@ def obj(parent, model, line, itr, oidh, octr):
                 # found a nested object
                 intobj += 1
                 if oname is None:
-                    print('ERROR: nested object defined before parent name')
-                    quit()
+                    # print('ERROR: nested object defined before parent name')
+                    # quit()
+                    raise RuntimeError('nested object defined before parent name')
                 line, octr = obj(oname, model, line, itr, oidh, octr)
             elif re.match('object', val):
                 # found an inline object
@@ -171,10 +176,12 @@ def obj(parent, model, line, itr, oidh, octr):
             if intobj:
                 intobj -= 1
                 line = next(itr)
+                line = remove_comment_inline(line)  # remove comments (anything after //...)
             else:
                 oend = 1
         else:
             line = next(itr)
+            line = remove_comment_inline(line)  # remove comments (anything after //...)
     # If undefined, use a default name
     if oname is None:
         oname = 'OBJECT_'+str(octr)
@@ -299,3 +306,12 @@ def parse(lines):
     # Return
     # -------
     return model, clock, directives, modules, classes, schedules
+
+
+def remove_comment_inline(line):
+    line_w_comment = re.search('(.+)(//.*$)', line)
+    if line_w_comment:
+        line = line_w_comment.group(0)  # remove comments (anything after //...)
+        if '//' in line:
+            line = line_w_comment.group(1)
+    return line
