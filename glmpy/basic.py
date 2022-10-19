@@ -4,6 +4,7 @@ import shutil
 import subprocess
 from pathlib import Path
 import pandas as pd
+import numpy as np
 import os
 
 
@@ -164,6 +165,62 @@ class Gridlabd:
             else:
                 return self.get_final_parent(parent_name, parent_type)
 
+    def model_from_comp(self, comp: set):
+        model = {}
+        for obj_name in comp:
+            if len(obj_name.split(
+                    ":")) == 2:  # support receiving obj_name in the form class:obj_name e.g. "meter:node_2"
+                obj_class = obj_name.split(":")[0]
+                obj_name = obj_name.split(":")[-1]
+            else:
+                obj_class = self.get_object_type(obj_name)
+            # add to model
+            if model.get(obj_class) is None:
+                model[obj_class] = {}
+            if model[obj_class].get(obj_name) is not None:
+                warnings.warn(f'Overwriting object, {obj_name}!')
+            model[obj_class][obj_name] = self.get(obj_name, obj_class)
+            # Find all references to the node:
+
+        return model
+
+    def get_all(self, obj_names: list):
+        model = {}
+        for obj_name in obj_names:
+            if len(obj_name.split(
+                    ":")) == 2:  # support receiving obj_name in the form class:obj_name e.g. "meter:node_2"
+                obj_class = obj_name.split(":")[0]
+                obj_name = obj_name.split(":")[-1]
+            else:
+                obj_class = self.get_object_type(obj_name)
+            # add to model
+            if model.get(obj_class) is None:
+                model[obj_class] = {}
+            if model[obj_class].get(obj_name) is not None:
+                warnings.warn(f'Overwriting object, {obj_name}!')
+            model[obj_class][obj_name] = self.get(obj_name, obj_class)
+        return model
+
+    def get(self, obj_name: str, obj_class=None):
+        """
+        Parameters
+        ----------
+        obj_name: str -- object name
+        obj_class: str -- optional class of object
+
+        Returns
+        -------
+        object dictionary
+        """
+        if len(obj_name.split(":")) == 2:  # support receiving obj_name in the form class:obj_name e.g. "meter:node_2"
+            obj_class = obj_name.split(":")[0]
+            obj_name = obj_name.split(":")[-1]
+        elif obj_class is None:
+            obj_class = self.get_object_type(obj_name)
+        if self.model[obj_class].get(obj_name) is None:
+            return self.model[obj_class].get('\"' + obj_name + '\"')
+        return self.model[obj_class][obj_name]
+
     def run(self, tmp_model_path=None, file_names_to_read=None):
         """
         Run the model in a temporary directory and read the result files into data frames.
@@ -177,10 +234,11 @@ class Gridlabd:
         dictionary of results as pandas dataframes
         """
 
-        if self.base_dir_path is None:
-            raise RuntimeError("Please define parameter, base_dir_path, before running.")
         # 1. Create temporary directory for storing and running the model
         if tmp_model_path is None:
+            if self.base_dir_path is None:
+                raise RuntimeError("No path is provided to add temporary directory to. Either provide, tmp_model_path "
+                                   "or define parameter, base_dir_path")
             tmp_model_path = self.base_dir_path
         tmp_dir = Path(tmp_model_path) / 'gld_tmp'
         if tmp_dir.exists():
@@ -193,11 +251,10 @@ class Gridlabd:
             player_dir.mkdir()
             for player_name in self.model['player'].keys():
                 if self.model['player'][player_name].get('file') is not None:
-                    old_path_name = (self.base_dir_path/Path(self.model['player'][player_name].get('file'))).absolute()
+                    old_path_name = Path(self.model['player'][player_name].get('file')).absolute()
                     shutil.copy(old_path_name, player_dir/old_path_name.name)
                     self.model['player'][player_name]['file'] = str(Path('players/'+old_path_name.name))
-                    #/home/nathangray/PycharmProjects/glmpy_public/glmpy/unittest/case/players/load_3_pA.player
-        # 3. Create sub-directory for output files to go to.
+        # 3. Create subdirectory for output files to go to.
         out_dir = tmp_dir / 'output'
         out_dir.mkdir()
         self.change_output_dirs('output')
@@ -218,6 +275,182 @@ class Gridlabd:
                 results[Path(file).name] = self.read_csv(file)
         return results
 
+    def total_load(self):
+        minus30 = np.exp(-1j*np.pi/6)  # -30 deg
+        minus120 = np.exp(-1j*np.pi*2/3)  # -120 deg
+        delta_to_wye = minus30/np.sqrt(3) * np.array(
+            [
+                [1,           0, -1*minus120],
+                [-1*minus120, 1,           0],
+                [0, -1*minus120,           1]
+            ]
+        )
+        s_wye_tot = np.zeros(3, dtype=complex)
+        s_del_tot = np.zeros(3, dtype=complex)
+        # parse loads as constant p and q loads on each phase using nominal voltage
+        for load_name, load in self.model['load'].items():
+            v_nom = float(load.get('nominal_voltage'))
+            v = np.zeros(3, dtype=complex)
+            v[0] = v_nom * (minus120 ** 0)
+            v[1] = v_nom * (minus120 ** 1)
+            v[2] = v_nom * (minus120 ** 2)
+            v_delta = np.sqrt(3)*v*np.exp(1j*np.pi/6)
+            s_wye = np.zeros(3, dtype=complex)
+            s_delta = np.zeros(3, dtype=complex)
+            # Add all types of loads assuming nominal balanced voltages
+
+            for i, ph in enumerate('ABC'):
+                # Constant PQ WYE connected load:
+                s_wye[i] += complex(load.get(f'constant_power_{ph}', complex(0)))
+                s_wye[i] += complex(load.get(f'constant_power_{ph}N', complex(0)))
+                # Constant current WYE connected load:
+                s_wye[i] += v[i]*np.conjugate(complex(load.get(f'constant_current_{ph}', complex(0))))
+                s_wye[i] += v[i]*np.conjugate(complex(load.get(f'constant_current_{ph}N', complex(0))))
+                # Constant impedance WYE connected load
+                if f'constant_impedance_{ph}' in load.keys():
+                    s_wye[i] += (v[i])**2 / complex(load.get(f'constant_impedance_{ph}', complex(0)))
+                if f'constant_impedance_{ph}N' in load.keys():
+                    s_wye[i] += (v[i])**2 / complex(load.get(f'constant_impedance_{ph}N', complex(0)))
+                # ZIP Loads
+                if f'base_power_{ph}' in load.keys():
+                    base_power = float(load.get(f'base_power_{ph}'))
+                    power_pf = float(load.get(f'power_pf_{ph}', 1))
+                    current_pf = float(load.get(f'current_pf_{ph}', 1))
+                    impedance_pf = float(load.get(f'impedance_pf_{ph}', 1))
+                    power_fraction = float(load.get(f'power_fraction_{ph}', 1))
+                    current_fraction = float(load.get(f'current_fraction_{ph}', 0))
+                    impedance_fraction = float(load.get(f'impedance_fraction_{ph}', 0))
+                    p = base_power * (power_fraction * power_pf +
+                                  current_fraction * current_pf +
+                                  impedance_fraction * impedance_pf)
+                    q = base_power * (power_fraction * np.sin(np.arccos(power_pf)) +
+                                      current_fraction * np.sin(np.arccos(current_pf)) +
+                                      impedance_fraction * np.sin(np.arccos(impedance_pf)))
+                    s_wye[i] += p + 1j*q
+            for i, ph in enumerate(['AB', 'BC', 'CA']):
+                # Constant PQ delta connected load:
+                s_delta[i] = complex(load.get(f'constant_power_{ph}', complex(0)))
+                # Constant current WYE connected load:
+                s_delta[i] += v_delta[i]*np.conjugate(complex(load.get(f'constant_current_{ph}', complex(0))))
+                # Constant impedance WYE connected load
+                if f'constant_impedance_{ph}' in load.keys():
+                    s_delta[i] += (v_delta[i])**2 / complex(load.get(f'constant_impedance_{ph}', complex(1)))
+            # print(f'{load_name}:')
+            s = s_wye + delta_to_wye @ s_delta
+            # print(f's: {s},\ts_wye: {s_wye},\ts_del: {s_delta}')
+            s_wye_tot += s_wye
+            s_del_tot += s_delta
+        s_tot = s_wye_tot + delta_to_wye @ s_del_tot
+        print(f'Total Load per phase:\n'
+              f'{s_tot}')
+        print(f'Total Load:\n'
+              f'{sum(s_tot)}')
+        return s_tot
+
+    def analyze_loads(self):
+        simplified_loads = []
+        minus30 = np.exp(-1j*np.pi/6)  # -30 deg
+        minus120 = np.exp(-1j*np.pi*2/3)  # -120 deg
+        delta_to_wye = minus30/np.sqrt(3) * np.array(
+            [
+                [1,           0, -1*minus120],
+                [-1*minus120, 1,           0],
+                [0, -1*minus120,           1]
+            ]
+        )
+        s_wye_tot = np.zeros(3, dtype=complex)
+        s_del_tot = np.zeros(3, dtype=complex)
+        # parse loads as constant p and q loads on each phase using nominal voltage
+        for load_name, load in self.model['load'].items():
+            v_nom = float(load.get('nominal_voltage'))
+            v = np.zeros(3, dtype=complex)
+            v[0] = v_nom * (minus120 ** 0)
+            v[1] = v_nom * (minus120 ** 1)
+            v[2] = v_nom * (minus120 ** 2)
+            v_delta = np.sqrt(3)*v*np.exp(1j*np.pi/6)
+            s_wye = np.zeros(3, dtype=complex)
+            s_delta = np.zeros(3, dtype=complex)
+            # Add all types of loads assuming nominal balanced voltages
+
+            if 'D' not in load.get('phases'):
+                for i, ph in enumerate('ABC'):
+                    # Constant PQ WYE connected load:
+                    s_wye[i] += complex(load.get(f'constant_power_{ph}', complex(0)))
+                    s_wye[i] += complex(load.get(f'constant_power_{ph}N', complex(0)))
+                    # Constant current WYE connected load:
+                    s_wye[i] += v[i]*np.conjugate(complex(load.get(f'constant_current_{ph}', complex(0))))
+                    s_wye[i] += v[i]*np.conjugate(complex(load.get(f'constant_current_{ph}N', complex(0))))
+                    # Constant impedance WYE connected load
+                    if f'constant_impedance_{ph}' in load.keys():
+                        s_wye[i] += np.abs(v[i])**2 / np.conjugate(complex(load.get(f'constant_impedance_{ph}', complex(0))))
+                    if f'constant_impedance_{ph}N' in load.keys():
+                        s_wye[i] += np.abs(v[i])**2 / np.conjugate(complex(load.get(f'constant_impedance_{ph}N', complex(0))))
+                    # ZIP Loads
+                    if f'base_power_{ph}' in load.keys():
+                        base_power = float(load.get(f'base_power_{ph}'))
+                        power_pf = float(load.get(f'power_pf_{ph}', 1))
+                        current_pf = float(load.get(f'current_pf_{ph}', 1))
+                        impedance_pf = float(load.get(f'impedance_pf_{ph}', 1))
+                        power_fraction = float(load.get(f'power_fraction_{ph}', 1))
+                        current_fraction = float(load.get(f'current_fraction_{ph}', 0))
+                        impedance_fraction = float(load.get(f'impedance_fraction_{ph}', 0))
+                        p = base_power * (power_fraction * power_pf +
+                                      current_fraction * current_pf +
+                                      impedance_fraction * impedance_pf)
+                        q = base_power * (power_fraction * np.sin(np.arccos(power_pf)) +
+                                          current_fraction * np.sin(np.arccos(current_pf)) +
+                                          impedance_fraction * np.sin(np.arccos(impedance_pf)))
+                        s_wye[i] += p + 1j*q
+            if "D" in load.get('phases'):
+                for i, ph in enumerate(['AB', 'BC', 'CA']):
+                    # Constant PQ delta connected load:
+                    s_delta[i] = complex(load.get(f'constant_power_{ph}', complex(0)))
+                    # Constant current WYE connected load:
+                    s_delta[i] += v_delta[i]*np.conjugate(complex(load.get(f'constant_current_{ph}', complex(0))))
+                    # Constant impedance WYE connected load
+                    if f'constant_impedance_{ph}' in load.keys():
+                        s_delta[i] += np.abs(v_delta[i])**2 / np.conjugate(complex(load.get(f'constant_impedance_{ph}', complex(1))))
+                for i, ph in enumerate(['A', 'B', 'C']):  # repeat since gridlabd reads constant_power_A as constant_power_AB when delta connected
+                    # Constant PQ delta connected load:
+                    s_delta[i] = complex(load.get(f'constant_power_{ph}', complex(0)))
+                    # Constant current WYE connected load:
+                    s_delta[i] += v_delta[i]*np.conjugate(complex(load.get(f'constant_current_{ph}', complex(0))))
+                    # Constant impedance WYE connected load
+                    if f'constant_impedance_{ph}' in load.keys():
+                        s_delta[i] += np.abs(v_delta[i])**2 / np.conjugate(complex(load.get(f'constant_impedance_{ph}', complex(1))))
+            print(f'{load_name}:')
+            s = s_wye + delta_to_wye @ s_delta
+            print(f's: {s}\n'
+                  f's_wye: {s_wye},\n'
+                  f's_del: {s_delta}')
+            s_wye_tot += s_wye
+            s_del_tot += s_delta
+            name_and_load = [load_name]
+            name_and_load.extend(s)
+            print(name_and_load)
+            simplified_loads.append(name_and_load)
+        s_tot = s_wye_tot + delta_to_wye @ s_del_tot
+        print(f'Total Load per phase:\n'
+              f'{s_tot}')
+        print(f'Total Load:\n'
+              f'{sum(s_tot)}')
+        simplified_loads = pd.DataFrame(simplified_loads)
+        return simplified_loads
+    # ~~~~~~~~~~ Graphing convenience methods ~~~~~~~~~~~~~~~~~~~
+    def analyze(self):
+        graph.analyze(self.model)
+
+    def create_graph(self, delete_open=False):
+        if delete_open:
+            return graph.create_graph(graph.delete_open(self.model))
+        else:
+            return graph.create_graph(self.model)
+
+    def draw_feeders(self, feeder_swing_nodes: list = None, **options):
+        return graph.draw_feeders(self.model, feeder_swing_nodes, **options)
+
+    def draw(self, **options):
+        return graph.draw(self.model, **options)
     # ~~~~~~~~~~ Methods for manipulating the model ~~~~~~~~~~~~~
     def remove_quotes_from_obj_names(self):
         """
@@ -251,7 +484,8 @@ class Gridlabd:
                             self.model[link_type][link_name]['configuration'] = \
                                 self.model[link_type][link_name]['configuration'].strip('\"').strip('\'')
 
-        node_types = ['meter', 'node', 'triplex_node', 'triplex_meter', 'load', 'pqload', 'capacitor', 'recorder']
+        node_types = ['meter', 'node', 'triplex_node', 'triplex_meter', 'load', 'pqload', 'capacitor', 'recorder',
+                      'inverter', 'diesel_dg']
         for obj_type in node_types:
             if self.model.get(obj_type) is not None:
                 for obj_name in self.model[obj_type].keys():
@@ -267,7 +501,7 @@ class Gridlabd:
 
     def change_output_dirs(self, new_output_dir):
         """
-        Modify all of the output file paths to have the path provided.
+        Modify all the output file paths to have the path provided.
 
         Parameters
         ----------
