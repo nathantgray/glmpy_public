@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='glmpy',
-    version='0.2.1',
+    version='0.3.0',
     description='A module for creating and modifying GridLAB-D Model files using Python.',
     maintainer='Nathan Gray',
     maintainer_email='nathantgray@gmail.com',

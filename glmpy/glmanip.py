@@ -7,7 +7,6 @@ and writes python dictionaries to a single GridLAB-D model file.
 """
 
 import re
-import glob
 from pathlib import Path
 
 
@@ -105,7 +104,6 @@ def write(ofn, model, clock, directives, modules, classes, schedules):
                 for p in model[t][o]:
                     try:
                         outf.write(f'\t{p} {model[t][o][p]};\n')
-                        # outf.write('\t' + p + ' ' + model[t][o][p]+';\n')
                     except TypeError:
                         raise TypeError(f"Failed to concatenate: {p} {model[t][o][p]}")
                 outf.write('}\n\n')

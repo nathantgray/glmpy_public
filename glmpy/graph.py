@@ -23,7 +23,7 @@ def create_graph(model):
         if model.get(obj_type) is not None:
             for key, value in model[obj_type].items():
                 if model[obj_type][key].get('parent') is None:
-                    g.add_node(key, attributes=value)
+                    g.add_node(key, obj_type=obj_type, attributes=value)
                 if model[obj_type][key].get('bustype') == 'SWING':
                     swing.append(key)
 
@@ -55,7 +55,7 @@ def create_graph(model):
                         color_b = 0.5
                     if 'c' in value['phases'].lower():
                         color_c = 0.5
-                g.add_edge(value['from'], value['to'], color=(color_a, color_b, color_c))
+                g.add_edge(value['from'], value['to'], obj_type=link_object, name=key, attributes=value, color=(color_a, color_b, color_c))
     return g
 
 
@@ -174,7 +174,7 @@ def analyze(model):
     print("----------------------------------")
 
 
-def delete_open(model):
+def delete_open(model, verbose=False):
     """
     Returns a copy of the model with open switches, reclosers, and fuses removed.
 
@@ -191,13 +191,14 @@ def delete_open(model):
         if obj_type in model.keys():
             switch_model = model[obj_type].copy()
             n_switches = len(model[obj_type])
-            print(f'{n_switches} open and closed {obj_type} objects')
             for sw in model[obj_type]:
                 if model[obj_type][sw].get('status') == 'OPEN':
                     del switch_model[sw]
             model[obj_type] = switch_model.copy()
             n_closed_sw = len(model[obj_type])
             n_open_sw = n_switches - n_closed_sw
+            if verbose:
+                print(f'{n_switches} open and closed {obj_type} objects')
             print(f'{n_closed_sw} closed {obj_type} objects')
             print(f'{n_open_sw} open {obj_type} objects')
 
@@ -220,7 +221,7 @@ def delete_open(model):
     return model
 
 
-def draw(model, **options):
+def draw_model(model, **options):
     """
     Plots the model without modifying it.
     Plots do not include open switches.
@@ -230,12 +231,27 @@ def draw(model, **options):
     options: optional keywords for networkx.draw_networkx
 
     Returns
-    -------
+    ----------
     None
     """
     # print(f'options = {options}')
     model_ = delete_open(model)
     g = create_graph(model_)
+    draw_graph(g, **options)
+
+def draw_graph(g, **options):
+    """
+    Plots the model without modifying it.
+    Plots do not include open switches.
+    Parameters
+    ----------
+    g: graph
+    options: optional keywords for networkx.draw_networkx
+
+    Returns
+    -------
+    None
+    """
     edge_color = [g.get_edge_data(edge[0], edge[1])[0]['color'] for edge in g.edges]
 
     # set default graphing options

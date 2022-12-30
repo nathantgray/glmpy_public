@@ -6,6 +6,17 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import os
+import networkx as nx
+import matplotlib.pyplot as plt
+from networkx.drawing.nx_agraph import graphviz_layout
+from copy import deepcopy, copy
+
+_link_types = [
+    'link', 'overhead_line', 'underground_line', 'triplex_line', 'transformer',
+    'regulator', 'fuse', 'switch', 'recloser', 'relay', 'sectionalizer', 'series_reactor'
+]
+_node_types = ['meter', 'node', 'triplex_node', 'triplex_meter', 'load', 'pqload', 'capacitor', 'recorder',
+               'inverter', 'diesel_dg']
 
 
 class Gridlabd:
@@ -50,6 +61,10 @@ class Gridlabd:
 
     def write(self, filename):
         glmanip.write(filename, self.model, self.clock, self.directives, self.modules, self.classes, self.schedules)
+
+    def swing_nodes(self):
+        return self.find_objects_with_property_value('bustype', 'SWING', search_types=['meter', 'node'],
+                                                      prepend_class=False)
 
     def find_objects_with_property_value(
             self, obj_property: str, value: str, search_types: list = None, prepend_class=False):
@@ -252,7 +267,7 @@ class Gridlabd:
             player_dir.mkdir()
             for player_name in self.model['player'].keys():
                 if self.model['player'][player_name].get('file') is not None:
-                    old_path_name = Path(self.model['player'][player_name].get('file')).absolute()
+                    old_path_name = (tmp_model_path / Path(self.model['player'][player_name].get('file'))).absolute()
                     shutil.copy(old_path_name, player_dir/old_path_name.name)
                     self.model['player'][player_name]['file'] = str(Path('players/'+old_path_name.name))
         # 3. Create subdirectory for output files to go to.
@@ -410,8 +425,7 @@ class Gridlabd:
                     s_delta[i] += v_delta[i]*np.conjugate(complex(load.get(f'constant_current_{ph}', complex(0))))
                     # Constant impedance WYE connected load
                     if f'constant_impedance_{ph}' in load.keys():
-                        s_delta[i] += \
-                            np.abs(v_delta[i])**2 / np.conjugate(
+                        s_delta[i] += np.abs(v_delta[i]) ** 2 / np.conjugate(
                                 complex(load.get(f'constant_impedance_{ph}', complex(1))))
 
                 # repeat since gridlabd reads constant_power_A as constant_power_AB when delta connected
@@ -422,8 +436,7 @@ class Gridlabd:
                     s_delta[i] += v_delta[i]*np.conjugate(complex(load.get(f'constant_current_{ph}', complex(0))))
                     # Constant impedance WYE connected load
                     if f'constant_impedance_{ph}' in load.keys():
-                        s_delta[i] += \
-                            np.abs(v_delta[i])**2 / np.conjugate(
+                        s_delta[i] += np.abs(v_delta[i]) ** 2 / np.conjugate(
                                 complex(load.get(f'constant_impedance_{ph}', complex(1))))
             print(f'{load_name}:')
             s = s_wye + delta_to_wye @ s_delta
@@ -460,6 +473,54 @@ class Gridlabd:
     def draw(self, **options):
         return graph.draw(self.model, **options)
     # ~~~~~~~~~~ Methods for manipulating the model ~~~~~~~~~~~~~
+    def rename_object(self, obj_name: str, new_obj_name: str, obj_type: str = None):
+        if obj_type is None:
+            obj_type = self.get_object_type(obj_name)
+
+        children = self.find_objects_with_property_value('parent', obj_name, prepend_class=True)
+        for child in children:
+            self.get(child)['parent'] = new_obj_name
+        if obj_type in _node_types:
+            upstream_links = self.find_objects_with_property_value('to', obj_name, search_types=_link_types,
+                                                                   prepend_class=True)
+            for upstream_link in upstream_links:
+                self.get(upstream_link)['to'] = new_obj_name
+            downstream_links = self.find_objects_with_property_value('from', obj_name, search_types=_link_types,
+                                                                     prepend_class=True)
+            for downstream_link in downstream_links:
+                self.get(downstream_link)['from'] = new_obj_name
+
+        configurations = self.find_objects_with_property_value('configuration', obj_name, prepend_class=True)
+        for configuration in configurations:
+            self.get(configuration)['configuration'] = new_obj_name
+        conductor_A_refs = self.find_objects_with_property_value('conductor_A', obj_name,
+                                                                 search_types=['line_configuration'],
+                                                                 prepend_class=True)
+        for ref in conductor_A_refs:
+            self.get(ref)['conductor_A'] = new_obj_name
+        conductor_B_refs = self.find_objects_with_property_value('conductor_B', obj_name,
+                                                                 search_types=['line_configuration'],
+                                                                 prepend_class=True)
+        for ref in conductor_B_refs:
+            self.get(ref)['conductor_B'] = new_obj_name
+        conductor_C_refs = self.find_objects_with_property_value('conductor_C', obj_name,
+                                                                 search_types=['line_configuration'],
+                                                                 prepend_class=True)
+        for ref in conductor_C_refs:
+            self.get(ref)['conductor_C'] = new_obj_name
+        conductor_N_refs = self.find_objects_with_property_value('conductor_N', obj_name,
+                                                                 search_types=['line_configuration'],
+                                                                 prepend_class=True)
+        for ref in conductor_N_refs:
+            self.get(ref)['conductor_N'] = new_obj_name
+        spacing_refs = self.find_objects_with_property_value('spacing', obj_name, search_types=['line_configuration'],
+                                                             prepend_class=True
+                                                             )
+        for ref in spacing_refs:
+            self.get(ref)['spacing'] = new_obj_name
+
+        self.add_object(obj_type, new_obj_name, **self.get(obj_name))
+        del self.model[obj_type][obj_name]
 
     def remove_quotes_from_obj_names(self):
         """
@@ -580,7 +641,7 @@ class Gridlabd:
 
     def require_module(self, module_name, **params):
         """
-        Will ensure that the module is included. If not it will be added. If it is included it will do nothing.
+        Will ensure that the module is included. If not it will be added. If it is already included it will do nothing.
         This is similar to add_module but does not overwrite parameters if it already exists
         Parameters
         ----------
@@ -612,6 +673,60 @@ class Gridlabd:
         """
         if self.model.get('helics_msg') is not None:
             del self.model['helics_msg']
+
+    def rename_all_nodes(self, prefix=None):
+        if prefix is None:
+            prefix = "n"
+        swing_nodes = self.swing_nodes()
+        if len(swing_nodes) != 1:
+            warnings.warn("This method assumes the model has a single SWING bus.")
+            return
+        if len(swing_nodes) == 1:
+            root = swing_nodes[0]
+        g = self.create_graph(delete_open=True)
+        g = graph.fix_reversed_links(g, root)
+        node_gen = nx.dfs_preorder_nodes(g, source=root)
+        for i, n, in enumerate(node_gen):
+
+            new_name = prefix + f"{i+1}"
+            self.rename_object(n, new_name)
+            print(f"{i+1}: {n}: {new_name}")
+
+    def rename_all_overhead_lines(self, prefix=None):
+
+        if prefix is None:
+            prefix = "ohl"
+        lines = [line for line in self.model.get('overhead_line').keys()]
+        for line in lines:
+            n_from = self.model['overhead_line'][line]['from']
+            n_to = self.model['overhead_line'][line]['to']
+            new_name = f"{prefix}_{n_from}_{n_to}"
+            self.rename_object(line, new_name, 'overhead_line')
+
+    def rename_all_fuses(self, prefix=None):
+
+        if prefix is None:
+            prefix = "fuse"
+        fuses = [fuse for fuse in self.model.get('fuse').keys()]
+        for fuse in fuses:
+            n_from = self.model['fuse'][fuse]['from']
+            n_to = self.model['fuse'][fuse]['to']
+            new_name = f"{prefix}_{n_from}_{n_to}"
+            self.rename_object(fuse, new_name, 'fuse')
+
+    def rename_all_loads(self, prefix=None):
+        if prefix is None:
+            prefix = "load"
+        loads = [line for line in self.model.get('load').keys()]
+        for load in loads:
+            parent = self.model['load'][load].get('parent')
+            if parent is None:
+                warnings.warn("Load is not a child object. This method assumes loads have parent nodes.")
+                return
+            new_name = f"{prefix}_{parent}"
+            self.rename_object(load, new_name, 'load')
+
+    # TODO: add method for combining GLMs. Duplicate could be optionally deleted or renamed.
 
     # ~~~~~~~~~~ Static Methods ~~~~~~~~~~~~~
     @staticmethod
