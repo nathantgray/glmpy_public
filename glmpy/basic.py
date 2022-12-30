@@ -1,5 +1,5 @@
 import warnings
-from glmpy import glmanip
+from glmpy import glmanip, graph
 import shutil
 import subprocess
 from pathlib import Path
@@ -51,7 +51,8 @@ class Gridlabd:
     def write(self, filename):
         glmanip.write(filename, self.model, self.clock, self.directives, self.modules, self.classes, self.schedules)
 
-    def find_objects_with_property_value(self, obj_property: str, value: str, search_types: list = None, prepend_class=False):
+    def find_objects_with_property_value(
+            self, obj_property: str, value: str, search_types: list = None, prepend_class=False):
         """
 
         Parameters
@@ -321,8 +322,8 @@ class Gridlabd:
                     current_fraction = float(load.get(f'current_fraction_{ph}', 0))
                     impedance_fraction = float(load.get(f'impedance_fraction_{ph}', 0))
                     p = base_power * (power_fraction * power_pf +
-                                  current_fraction * current_pf +
-                                  impedance_fraction * impedance_pf)
+                                      current_fraction * current_pf +
+                                      impedance_fraction * impedance_pf)
                     q = base_power * (power_fraction * np.sin(np.arccos(power_pf)) +
                                       current_fraction * np.sin(np.arccos(current_pf)) +
                                       impedance_fraction * np.sin(np.arccos(impedance_pf)))
@@ -336,8 +337,6 @@ class Gridlabd:
                 if f'constant_impedance_{ph}' in load.keys():
                     s_delta[i] += (v_delta[i])**2 / complex(load.get(f'constant_impedance_{ph}', complex(1)))
             # print(f'{load_name}:')
-            s = s_wye + delta_to_wye @ s_delta
-            # print(f's: {s},\ts_wye: {s_wye},\ts_del: {s_delta}')
             s_wye_tot += s_wye
             s_del_tot += s_delta
         s_tot = s_wye_tot + delta_to_wye @ s_del_tot
@@ -382,9 +381,11 @@ class Gridlabd:
                     s_wye[i] += v[i]*np.conjugate(complex(load.get(f'constant_current_{ph}N', complex(0))))
                     # Constant impedance WYE connected load
                     if f'constant_impedance_{ph}' in load.keys():
-                        s_wye[i] += np.abs(v[i])**2 / np.conjugate(complex(load.get(f'constant_impedance_{ph}', complex(0))))
+                        s_wye[i] += \
+                            np.abs(v[i])**2 / np.conjugate(complex(load.get(f'constant_impedance_{ph}', complex(0))))
                     if f'constant_impedance_{ph}N' in load.keys():
-                        s_wye[i] += np.abs(v[i])**2 / np.conjugate(complex(load.get(f'constant_impedance_{ph}N', complex(0))))
+                        s_wye[i] += \
+                            np.abs(v[i])**2 / np.conjugate(complex(load.get(f'constant_impedance_{ph}N', complex(0))))
                     # ZIP Loads
                     if f'base_power_{ph}' in load.keys():
                         base_power = float(load.get(f'base_power_{ph}'))
@@ -395,8 +396,8 @@ class Gridlabd:
                         current_fraction = float(load.get(f'current_fraction_{ph}', 0))
                         impedance_fraction = float(load.get(f'impedance_fraction_{ph}', 0))
                         p = base_power * (power_fraction * power_pf +
-                                      current_fraction * current_pf +
-                                      impedance_fraction * impedance_pf)
+                                          current_fraction * current_pf +
+                                          impedance_fraction * impedance_pf)
                         q = base_power * (power_fraction * np.sin(np.arccos(power_pf)) +
                                           current_fraction * np.sin(np.arccos(current_pf)) +
                                           impedance_fraction * np.sin(np.arccos(impedance_pf)))
@@ -409,15 +410,21 @@ class Gridlabd:
                     s_delta[i] += v_delta[i]*np.conjugate(complex(load.get(f'constant_current_{ph}', complex(0))))
                     # Constant impedance WYE connected load
                     if f'constant_impedance_{ph}' in load.keys():
-                        s_delta[i] += np.abs(v_delta[i])**2 / np.conjugate(complex(load.get(f'constant_impedance_{ph}', complex(1))))
-                for i, ph in enumerate(['A', 'B', 'C']):  # repeat since gridlabd reads constant_power_A as constant_power_AB when delta connected
+                        s_delta[i] += \
+                            np.abs(v_delta[i])**2 / np.conjugate(
+                                complex(load.get(f'constant_impedance_{ph}', complex(1))))
+
+                # repeat since gridlabd reads constant_power_A as constant_power_AB when delta connected
+                for i, ph in enumerate(['A', 'B', 'C']):
                     # Constant PQ delta connected load:
                     s_delta[i] = complex(load.get(f'constant_power_{ph}', complex(0)))
                     # Constant current WYE connected load:
                     s_delta[i] += v_delta[i]*np.conjugate(complex(load.get(f'constant_current_{ph}', complex(0))))
                     # Constant impedance WYE connected load
                     if f'constant_impedance_{ph}' in load.keys():
-                        s_delta[i] += np.abs(v_delta[i])**2 / np.conjugate(complex(load.get(f'constant_impedance_{ph}', complex(1))))
+                        s_delta[i] += \
+                            np.abs(v_delta[i])**2 / np.conjugate(
+                                complex(load.get(f'constant_impedance_{ph}', complex(1))))
             print(f'{load_name}:')
             s = s_wye + delta_to_wye @ s_delta
             print(f's: {s}\n'
@@ -437,6 +444,7 @@ class Gridlabd:
         simplified_loads = pd.DataFrame(simplified_loads)
         return simplified_loads
     # ~~~~~~~~~~ Graphing convenience methods ~~~~~~~~~~~~~~~~~~~
+
     def analyze(self):
         graph.analyze(self.model)
 
@@ -452,6 +460,7 @@ class Gridlabd:
     def draw(self, **options):
         return graph.draw(self.model, **options)
     # ~~~~~~~~~~ Methods for manipulating the model ~~~~~~~~~~~~~
+
     def remove_quotes_from_obj_names(self):
         """
         Use this to remove all quotes from object names and references. They aren't necessary.
@@ -479,7 +488,7 @@ class Gridlabd:
                         self.model[link_type][link_name]['to'] = \
                             self.model[link_type][link_name]['to'].strip('\"').strip('\'')
                     # clean configuration references
-                    if link_type in ['overhead_line', 'underground_line', 'transformer', 'regulator'] :
+                    if link_type in ['overhead_line', 'underground_line', 'transformer', 'regulator']:
                         if self.model[link_type][link_name].get('configuration') is not None:
                             self.model[link_type][link_name]['configuration'] = \
                                 self.model[link_type][link_name]['configuration'].strip('\"').strip('\'')
@@ -606,7 +615,7 @@ class Gridlabd:
 
     # ~~~~~~~~~~ Static Methods ~~~~~~~~~~~~~
     @staticmethod
-    def read_csv(filepath):
+    def read_csv(filepath, **kwargs):
         """
         Read GridLAB-D output csv file into a dataframe. This will automatically choose the appropriate header line.
         Parameters
@@ -618,10 +627,10 @@ class Gridlabd:
             df = pd.read_csv(
                 filepath,
                 sep=',',
-                header=1, index_col=0)
+                header=1, index_col=0, **kwargs)
         except pd.errors.ParserError:
             df = pd.read_csv(
                 filepath,
                 sep=',',
-                header=8, index_col=0)
+                header=8, index_col=0, **kwargs)
         return df
